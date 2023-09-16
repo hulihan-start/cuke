@@ -7,6 +7,7 @@ import run
 from core import helpers
 import codegen
 import torch
+from lab1 import InterchangeLoop
 
 def run_demo():
     def func():

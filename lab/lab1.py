@@ -5,6 +5,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.ir import *
 from codegen.cpu import *
 
+from core.ast2ir import *
+from core import helpers
+
 
 def PrintCCode(ir):
     code = ''
@@ -195,7 +198,6 @@ def FindBody(loop):
     else:
         return loop.body
 
-
 def get_index(statement, is_write, write_expr=[], read_expr=[]):
     if isinstance(statement, Ndarray) or isinstance(statement, Index):
         if is_write:
@@ -250,7 +252,7 @@ def direction_vec(write_idx, read_idx):
     rvec = []
     get_iterates(write_idx, wvec)
     get_iterates(read_idx, rvec)
-    print(wvec, rvec)
+    # print(wvec, rvec)
     return [x - y for x, y in zip(wvec, rvec)]
 
 
@@ -287,33 +289,15 @@ def InterchangeLoop(ir, loop_idx=[]):
     for ir_item in ir:
         if isinstance(ir_item, Loop):
             body = FindBody(ir_item)
+
             for body_item in body:
                 get_index(body_item, False, write_expr, read_expr)
 
-            PrintCCode(write_expr)
-            PrintCCode(read_expr)
-            print(write_expr, read_expr)
             for i in write_expr:
                 get_array(write_dict, i, i)
             for i in read_expr:
                 get_array(read_dict, i, i)
-            print(write_dict)
-            print(read_dict)
 
-            PrintCCode(write_dict['A'])
-            PrintCCode(write_dict['B'])
-
-            PrintCCode(read_dict['A'])
-            PrintCCode(read_dict['B'])
-
-            vecs = []
-            get_iterates(write_dict['A'][0], vecs)
-            get_iterates(write_dict['B'][0], vecs)
-
-            get_iterates(read_dict['A'][0], vecs)
-            get_iterates(read_dict['B'][0], vecs)
-            get_iterates(read_dict['B'][1], vecs)
-            print(vecs)
             d_vec = []
             for key in write_dict.keys():
                 if len(write_dict[key]) > 1:
@@ -327,15 +311,46 @@ def InterchangeLoop(ir, loop_idx=[]):
                 for i in tmp:
                     vec = direction_vec(write_dict[key][0], i)
                     d_vec.append(vec[::-1])
-            print(d_vec)
+            print('direction vector:', d_vec)
 
-            for i in range(len(d_vec[0])):
-                for j in range(i + 1, len(d_vec[0])):
-                    x = safety_checking(i, j, d_vec)
-                    print(x)
+            x = safety_checking(loop_idx[0], loop_idx[1], d_vec)
+            print(x)
 
-    # print("Please implement the pass here")
-    return interchangeable, ir_res
+            if x is True:
+                loops = []
+                tmp = ir_item
+                while isinstance(tmp, Loop):
+                    loops.append(tmp)
+                    tmp = tmp.body[0]
+                print(loops)
+                body = loops[-1].body
+
+                tmp = loops[loop_idx[0]]
+                loops[loop_idx[0]] = loops[loop_idx[1]]
+                loops[loop_idx[1]] = tmp
+
+                optimized_code = loops[0]
+                for idx, item in enumerate(loops):
+                    if idx > 0:
+                        loops[idx-1].body = [item]
+                loops[-1].body = body
+                ir_res.append(optimized_code)
+            else:
+                interchangeable = False
+                break
+        else:
+            ir_res.append(ir_item)
+    if interchangeable is True:
+        return ir_res, interchangeable
+    else:
+        return ir, False
+
+
+def tensorop():
+    A = Tensor('a', (10, 10))
+    B = Tensor('b', (10, 10))
+    C = Tensor('c', (10, 10))
+    return A + B - C
 
 
 if __name__ == "__main__":
@@ -345,9 +360,13 @@ if __name__ == "__main__":
     # PrintCCode(loop0_ir)
 
     optimized_loop0_ir, ir_res = InterchangeLoop(loop0_ir, [0, 1])
-    # PrintCCode(optimized_loop0_ir)
-    # optimized_loop1_ir = InterchangeLoop(loop1_ir, [1, 2]):
-    # optimized_loop2_ir = InterchangeLoop(loop2_ir, [0, 1]):
+    print(ir_res)
+    PrintCCode(optimized_loop0_ir)
+    # optimized_loop1_ir = InterchangeLoop(loop1_ir, [1, 2])
+    # optimized_loop2_ir = InterchangeLoop(loop2_ir, [0, 1])
+
+
+    print(loop0_ir)
 
     # optimized_ir = LoopInterchange(ir)
     # print("Loop after interchange:")
