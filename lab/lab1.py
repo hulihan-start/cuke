@@ -7,7 +7,7 @@ from codegen.cpu import *
 
 from core.ast2ir import *
 from core import helpers
-
+import run
 
 def PrintCCode(ir):
     code = ''
@@ -15,6 +15,7 @@ def PrintCCode(ir):
         if d:
             code += to_string(d)
     print(code)
+    return code
 
 
 
@@ -271,9 +272,10 @@ def safety_checking(i0, i1, vecs):
             if j == 0:
                 continue
             elif j > 0:
-                return True
+                break
             elif j < 0:
                 return False
+    return True
     # print('after change: ', tmp)
     # print('original vec:', vecs)
 
@@ -311,10 +313,10 @@ def InterchangeLoop(ir, loop_idx=[]):
                 for i in tmp:
                     vec = direction_vec(write_dict[key][0], i)
                     d_vec.append(vec[::-1])
-            print('direction vector:', d_vec)
+            # print('direction vector:', d_vec)
 
             x = safety_checking(loop_idx[0], loop_idx[1], d_vec)
-            print(x)
+            # print(x)
 
             if x is True:
                 loops = []
@@ -322,7 +324,7 @@ def InterchangeLoop(ir, loop_idx=[]):
                 while isinstance(tmp, Loop):
                     loops.append(tmp)
                     tmp = tmp.body[0]
-                print(loops)
+                # print(loops)
                 body = loops[-1].body
 
                 tmp = loops[loop_idx[0]]
@@ -345,28 +347,32 @@ def InterchangeLoop(ir, loop_idx=[]):
     else:
         return ir, False
 
-
-def tensorop():
-    A = Tensor('a', (10, 10))
-    B = Tensor('b', (10, 10))
-    C = Tensor('c', (10, 10))
-    return A + B - C
-
+def gen_cpp(ir):
+    code = PrintCCode(ir)
+    code += f'return obj_A;\n'
+    with open('codegen/cpp_template.cpp', 'r') as f:
+        c_code = f.read()
+        c_code = c_code.replace('RTYPE', 'torch::Tensor').replace('FNAME', 'func').replace('ARGS', '').replace('CODE', code)
+    return c_code
 
 if __name__ == "__main__":
     loop0_ir = Loop0()
     loop1_ir = Loop1()
     loop2_ir = Loop2()
-    # PrintCCode(loop0_ir)
+    PrintCCode(loop1_ir)
+    print(loop1_ir)
 
-    optimized_loop0_ir, ir_res = InterchangeLoop(loop0_ir, [0, 1])
-    print(ir_res)
-    PrintCCode(optimized_loop0_ir)
+    code = gen_cpp(loop1_ir)
+    print(code)
+    d = run.cpu.compile_and_run(code)
+    print(d.shape)
+    # optimized_loop0_ir, ir_res = InterchangeLoop(loop0_ir, [0, 1])
+    # PrintCCode(optimized_loop0_ir)
     # optimized_loop1_ir = InterchangeLoop(loop1_ir, [1, 2])
     # optimized_loop2_ir = InterchangeLoop(loop2_ir, [0, 1])
 
 
-    print(loop0_ir)
+    # print(loop0_ir)
 
     # optimized_ir = LoopInterchange(ir)
     # print("Loop after interchange:")

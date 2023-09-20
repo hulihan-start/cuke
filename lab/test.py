@@ -18,6 +18,7 @@ def run_demo():
 
     ast = func()
     code = codegen.cpu.gen_cpp(gen_ir(ast))
+    print(code)
 
     # code = codegen.cpu.print_cpp(InterchangeLoop(ast._gen_ir(), [0, 1]))
 

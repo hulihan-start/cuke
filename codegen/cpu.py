@@ -1,7 +1,7 @@
 from core.ast2ir import *
 from core import helpers
 from ext.set import *
-
+from core.ir import *
 
 def to_string(ir):
     match ir.__class__.__name__:
