@@ -121,31 +121,52 @@ def get_same_loop(outloop, fusedloop):
     oloop = outloop.body[0]
     iloop = fusedloop.body[0]
     
-    loop_idx_change(outloop, [fusedloop])
-    # print(fusedloop.body[0].body, fusedloop.body[0].iterate)
-    # print("loop body:::",codegen.cpu.to_string(fusedloop.body[0]))
-    
-    # for i in fusedloop.body[0].body:
-    #     print(codegen.cpu.to_string(i))
-    # pre_i.iterate.__name__ = pre_o.iterate.__name__
-    while (isinstance(oloop, Loop) and isinstance(iloop, Loop)) and oloop.start == iloop.start and oloop.end.__name__ == iloop.end.__name__ and oloop.step == iloop.step:
+    pre_iter_i = []
+    pre_iter_o = []
 
+    pre_iter_i.append(pre_i.iterate)
+    pre_iter_o.append(pre_o.iterate)
+    while (isinstance(oloop, Loop) and isinstance(iloop, Loop)) and oloop.start == iloop.start and oloop.end.__name__ == iloop.end.__name__ and oloop.step == iloop.step:
         pre_o = oloop
         pre_i = iloop
-        # print(codegen.cpu.to_string(pre_i))
-        # pre_i.iterate.__name__ = pre_o.iterate.__name__
-        # print(codegen.cpu.to_string(iloop))
+        pre_iter_i.append(pre_i.iterate)
+        pre_iter_o.append(pre_o.iterate)
+
         oloop = oloop.body[0]
         iloop = iloop.body[0]
         
-    return pre_o, pre_i
+    return pre_o, pre_i, pre_iter_o, pre_iter_i
+
+def change_index(iassign, iter_o, iter_i):
+    if isinstance(iassign, Index):
+        for idx, item in enumerate(iter_i):
+            if iassign.index == item:
+                iassign.index = iter_o[idx]
+        if isinstance(iassign.dobject, Index):
+            change_index(iassign.dobject, iter_o, iter_i)
+        
+    elif isinstance(iassign, Expr):
+        # both item.left and item.right
+        change_index(iassign.left, iter_o, iter_i)
+        change_index(iassign.right, iter_o, iter_i)
+    elif isinstance(iassign, Assignment):
+        # both item.lhs and item.rhs
+        change_index(iassign.lhs, iter_o, iter_i)
+        change_index(iassign.rhs, iter_o, iter_i)
+    elif isinstance(iassign, Loop):
+        # oloop.body[0] and item.body
+        for i in iassign.body:
+            change_index(i, iter_o, iter_i)
+    
+
 
 def fuse_elementwise(ast):
+
     if type(ast.operators[0]) == BatchOp:
         fuse_elementwise(ast.operators[0])
     if type(ast.operators[1]) == BatchOp:
         fuse_elementwise(ast.operators[1])
-
+    
     if type(ast) == Batch or not ast.op_type in core.ast.op_mapping:
         return 
 
@@ -153,7 +174,9 @@ def fuse_elementwise(ast):
         outer_loop = ast.compute[0]
         loop = ast.operators[1].compute[0]
 
-        oloop, iloop = get_same_loop(outer_loop, loop)
+        oloop, iloop, iter_o, iter_i = get_same_loop(outer_loop, loop)
+        for i in iloop.body:
+            change_index(i, iter_o, iter_i)
         for i in range(len(iloop.body)):
             oloop.body.insert(i, iloop.body[i])
         iloop.body.clear()
@@ -162,13 +185,13 @@ def fuse_elementwise(ast):
     if ast.operators[0].compute and ast.compute:
         outer_loop = ast.compute[0]
         loop = ast.operators[0].compute[0]
-        # print("outer loop body:: ",codegen.cpu.to_string(loop))
-        oloop, iloop = get_same_loop(outer_loop, loop)
         
-        # print("loop body:::",codegen.cpu.to_string(iloop), iloop.body)
-        # print("assign: ", codegen.cpu.to_string(iloop.body[0]), codegen.cpu.to_string(iloop.body[0]))
+        oloop, iloop, iter_o, iter_i = get_same_loop(outer_loop, loop)
+        for i in iloop.body:
+            change_index(i, iter_o, iter_i)
         for i in range(len(iloop.body)):
             oloop.body.insert(i, iloop.body[i])
+        
         iloop.body.clear()
         ast.operators[0].compute.clear()
 
@@ -185,19 +208,97 @@ def fuse_innerprod(ast):
     if ast.operators[1].compute and ast.compute:
         outer_loop = ast.compute[0]
         loop = ast.operators[1].compute[0]
-
-        oloop, iloop = get_same_loop(outer_loop, loop)
+        
+        oloop, iloop, iter_o, iter_i = get_same_loop(outer_loop, loop)
+        for i in iloop.body:
+            change_index(i, iter_o, iter_i)
         for i in range(len(iloop.body)):
             oloop.body.insert(i, iloop.body[i])
+        
         iloop.body.clear()
         ast.operators[1].compute.clear()
 
     if ast.operators[0].compute and ast.compute:
         outer_loop = ast.compute[0]
         loop = ast.operators[0].compute[0]
-
-        oloop, iloop = get_same_loop(outer_loop, loop)
+        
+        oloop, iloop, iter_o, iter_i = get_same_loop(outer_loop, loop)
+        for i in iloop.body:
+            change_index(i, iter_o, iter_i)
         for i in range(len(iloop.body)):
             oloop.body.insert(i, iloop.body[i])
+        
+        iloop.body.clear()
+        ast.operators[0].compute.clear()
+
+
+def fuse_bsv(ast):
+    print(type(ast.operators[0]), type(ast.operators[1]), type(ast), ast.op_type)
+    if type(ast.operators[0]) == BatchOp:
+        fuse_bsv(ast.operators[0])
+    if type(ast.operators[1]) == BatchOp:
+        fuse_bsv(ast.operators[1])
+
+    if type(ast) == Batch or not ast.op_type == 'scal_mul_vec':
+        return 
+    print(ast.op_type, ast.operators[0].compute , ast.compute)
+    if ast.operators[1].compute and ast.compute:
+        outer_loop = ast.compute[0]
+        loop = ast.operators[1].compute[0]
+        
+        oloop, iloop, iter_o, iter_i = get_same_loop(outer_loop, loop)
+        for i in iloop.body:
+            change_index(i, iter_o, iter_i)
+        for i in range(len(iloop.body)):
+            oloop.body.insert(i, iloop.body[i])
+        
+        iloop.body.clear()
+        ast.operators[1].compute.clear()
+
+    if ast.operators[0].compute and ast.compute:
+        outer_loop = ast.compute[0]
+        loop = ast.operators[0].compute[0]
+        
+        oloop, iloop, iter_o, iter_i = get_same_loop(outer_loop, loop)
+        for i in iloop.body:
+            change_index(i, iter_o, iter_i)
+        for i in range(len(iloop.body)):
+            oloop.body.insert(i, iloop.body[i])
+        
+        iloop.body.clear()
+        ast.operators[0].compute.clear()
+    
+
+def fuse_bvm(ast):
+    if type(ast.operators[0]) == BatchOp:
+        fuse_bvm(ast.operators[0])
+    if type(ast.operators[1]) == BatchOp:
+        fuse_bvm(ast.operators[1])
+
+    if type(ast) == Batch or not ast.op_type == 'vec_mul_mat':
+        return 
+    if ast.operators[1].compute and ast.compute:
+        outer_loop = ast.compute[0]
+        loop = ast.operators[1].compute[0]
+        
+        oloop, iloop, iter_o, iter_i = get_same_loop(outer_loop, loop)
+        for i in iloop.body:
+            change_index(i, iter_o, iter_i)
+        for i in range(len(iloop.body)):
+            oloop.body.insert(i, iloop.body[i])
+        
+        iloop.body.clear()
+        ast.operators[1].compute.clear()
+
+    if ast.operators[0].compute and ast.compute:
+        outer_loop = ast.compute[0]
+        loop = ast.operators[0].compute[0]
+        
+        oloop, iloop, iter_o, iter_i = get_same_loop(outer_loop, loop)
+        for i in iloop.body:
+            change_index(i, iter_o, iter_i)
+        for i in range(len(iloop.body)):
+            oloop.body.insert(i, iloop.body[i])
+        
         iloop.body.clear()
         ast.operators[0].compute.clear()
