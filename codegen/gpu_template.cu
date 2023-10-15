@@ -7,7 +7,7 @@ __global__ void FNAME_kernel(PTRS){
 RTYPE FNAME(ARGS)
 {   
     DECL
-    FNAME_kernel<<<  >>>(PTR_VARS);
+    FNAME_kernel<<< batch_size/16, dim3(32,16) >>>(PTR_VARS);
     RETURN
 }
 

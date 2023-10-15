@@ -29,6 +29,8 @@ def gen_ir(node):
             node.eval = node.base.eval
             node.decl = node.base.decl[:]
             node.compute = node.base.compute[:]
+            for i in node.compute:
+                i.ast_ref = node
             node.base.decl.clear()
             node.base.compute.clear()
 
@@ -46,6 +48,7 @@ def gen_ir(node):
             res = bind(node.eval, pre_loop.iterate)
             inner_loop =  Loop(0, node.operators[0].eval.size[1], 1, [])
             pre_loop.body.append(inner_loop)
+            pre_loop.ast_ref = node
             lhs = bind(lhs, inner_loop.iterate)
             rhs = bind(rhs, inner_loop.iterate)
             assign = Assignment(res, Expr(lhs, rhs, '*'), '+')
@@ -65,6 +68,7 @@ def gen_ir(node):
             res = bind(node.eval, pre_loop.iterate)
             inner_loop =  Loop(0, node.eval.size[1], 1, [])
             pre_loop.body.append(inner_loop)
+            pre_loop.ast_ref = node
             rhs = bind(rhs, inner_loop.iterate)
             res = bind(res, inner_loop.iterate)
 
@@ -77,6 +81,7 @@ def gen_ir(node):
             node.operators[1]._gen_ir()
             size = helpers.get_ir_of_size(node._size())
             node.base.eval = node.eval = Ndarray(node.dtype, size)
+            node.eval.val = 0
             node.decl = [Decl(node.eval)]
             pre_loop = Loop(0, node.eval.size[0], 1, [])
             node.compute = [pre_loop]
@@ -85,6 +90,7 @@ def gen_ir(node):
             res = bind(node.eval, pre_loop.iterate)
             loop1 = Loop(0, node.eval.size[1], 1, [])
             pre_loop.body.append(loop1)
+            pre_loop.ast_ref = node
             res = bind(res, loop1.iterate)
             loop2 = Loop(0, node.operators[0].eval.size[1], 1, [])
             loop1.body.append(loop2)
@@ -109,6 +115,7 @@ def gen_ir(node):
             res = bind(node.eval, pre_loop.iterate)
             loop1 = Loop(0, node.eval.size[1], 1, [])
             pre_loop.body.append(loop1)
+            pre_loop.ast_ref = node
             lhs = bind(lhs, loop1.iterate)
             res = bind(res, loop1.iterate)
             loop2 = Loop(0, node.eval.size[2], 1, [])

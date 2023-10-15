@@ -2,6 +2,7 @@ from core.ast2ir import *
 import helpers
 import batch
 from batch.opt.ir import *
+from codegen.gpu_instructionsets import *
 
 def to_string(ir):
     match ir.__class__.__name__:
@@ -19,24 +20,14 @@ def to_string(ir):
                     code += to_string(e)
             code += "} \n"
             return code
-        case 'CUDAThread':
-            pass
         case 'Scalar' | 'Ndarray' | 'Ref':
             return ir.name()
-        case 'Index':
-            # print(ir.ind_arr, ir.index, ir.dobject, ir.index.addr())
-            if ir.ind_arr != None:
-                if type(ir.ind_arr) == Slice:
-                    return f'{to_string(ir.dobject)}[(({to_string(ir.ind_arr.start)})+({to_string(ir.ind_arr.step)})*({to_string(ir.index)}))]'
-                else: # idx is a Tensor
-                    if ir.index == None:
-                        return f'{to_string(ir.dobject)}[{to_string(ir.ind_arr)}]'
-                    else:
-                        return f'{to_string(ir.dobject)}[{to_string(ir.ind_arr)}[{to_string(ir.index)}]]'
+        case 'Indexing':
+            if type(ir.dobject) == Slice:
+                return f'(({to_string(ir.dobject.start)})+({to_string(ir.dobject.step)})*({to_string(ir.idx)}))'
             else:
-                return f'{to_string(ir.dobject)}[{to_string(ir.index)}]'
+                return f'{to_string(ir.dobject)}[{to_string(ir.idx)}]'
         case 'Decl':
-            # return ''
             # variables are passed in as pytorch arguments
             if type(ir.dobject) == Scalar:
                 if not ir.dobject.is_arg:
@@ -51,58 +42,71 @@ def to_string(ir):
                 code = ''
                 if not ir.dobject.is_arg:
                     if ir.dobject.val != None:
-                        code = f'torch::Tensor obj_{ir.dobject.name()} = torch::{"ones" if ir.dobject.val == 1 else "zeros"}({{{",".join([to_string(s) for s in ir.dobject.size])}}}, at::k{"Int" if ir.dobject.dtype=="int" else "Float"});\n'
+                        code = f'torch::Tensor obj_{ir.dobject.name()} = torch::{"ones" if ir.dobject.val == 1 else "zeros"}({{{",".join([to_string(s) for s in ir.dobject.size])}}}, torch::TensorOptions(torch::k{"Int" if ir.dobject.dtype=="int" else "Float"}).device(torch::kCUDA));\n'
                     else:
-                        code = f'torch::Tensor obj_{ir.dobject.name()} = torch::empty({{{",".join([to_string(s) for s in ir.dobject.size])}}}, at::k{"Int" if ir.dobject.dtype=="int" else "Float"});\n'
+                        code = f'torch::Tensor obj_{ir.dobject.name()} = torch::empty({{{",".join([to_string(s) for s in ir.dobject.size])}}}, torch::TensorOptions(torch::k{"Int" if ir.dobject.dtype=="int" else "Float"}).device(torch::kCUDA));\n'
 
                 # code += f'auto {ir.dobject.name()} = obj_{ir.dobject.name()}.accessor<{ir.dobject.dtype}, {len(ir.dobject.size)}>();\n'
                 return code
-            elif type(ir.dobject) == Ref:
-                code = f'{ir.dobject.dobject.dtype}* {ir.dobject.name()} = ({ir.dobject.dobject.dtype}*)&{ir.dobject.dobject.addr()}'
-                return code
+            # elif type(ir.dobject) == Ref:
+            #     code = f'{ir.dobject.dobject.dtype}* {ir.dobject.name()} = ({ir.dobject.dobject.dtype}*)&{ir.dobject.dobject.addr()}'
+            #     return code
+        case 'ThreadIdy' | 'ThreadIdx' | 'BlockIdy' | 'BlockIdx' | 'BlockDimy' | 'BlockDimx' | 'SyncThreads' | 'SyncWarps':
+            return ir2gpu(ir)
+        case 'ShuffleDown':
+            return f'for (int off = blockDim.x/2; off > 0; off >>= 1) {{\n {to_string(ir.dobject)} += __shfl_down_sync(0xffffffff, {to_string(ir.dobject)}, off); \n}}\n'
+        case 'ShuffleUp':
+            return f'for (int off = blockDim.x/2; off > 0; off >>= 1) {{\n {to_string(ir.dobject)} += __shfl_up_sync(0xffffffff, {to_string(ir.dobject)}, off); \n}}\n'
+        case 'ShuffleXor':
+            return f'for (int off = blockDim.x/2; off > 0; off >>= 1) {{\n {to_string(ir.dobject)} += __shfl_xor_sync(0xffffffff, {to_string(ir.dobject)}, off); \n}}\n'
+        case 'BroadCast':
+            return f'{to_string(ir.dobject)} = __shfl_sync(0xffffffff, {to_string(ir.dobject)}, 0);\n'
+        case 'SaveAtThread':
+            return f'if (threadIdx.x == {ir.threadid}) {{\n {to_string(Assignment(ir.dst, ir.src))} }}\n'
         case _:
             return str(ir)
 
 def gen_cuda(ast, cpu_ir, gpu_ir):
     # 2 ir list for cpu and gpu
     def action_cpu(node, res):
-        if type(node) == Var or type(node) == One or type(node) == Zero or type(node) == Ones or type(node) == Zeros or type(node) == Tensor:
-            res.extend(node.decl)
-        elif type(node) == TensorOp:
-            res.extend(node.decl)
-            # res.extend(node.compute)
-        elif type(node) == batch.ast.BatchOp:
-            res.extend(node.decl)
-            # res.extend(node.compute)
+        if node.valid:
+            if type(node) == Var or type(node) == One or type(node) == Zero or type(node) == Ones or type(node) == Zeros or type(node) == Tensor:
+                res.extend(node.decl)
+            elif type(node) == TensorOp:
+                res.extend(node.decl)
+                # res.extend(node.compute)
+            elif type(node) == batch.ast.BatchOp:
+                res.extend(node.decl)
+                # res.extend(node.compute)
 
     def action_cuda(node, res):
-        if type(node) == TensorOp:
-            # res.extend(node.decl)
-            res.extend(node.compute)
-        elif type(node) == batch.ast.BatchOp:
-            res.extend(node.decl)
-            res.extend(node.compute)
+        if node.valid:
+            if type(node) == TensorOp:
+                # res.extend(node.decl)
+                res.extend(node.compute)
+            elif type(node) == batch.ast.BatchOp:
+                res.extend(node.decl)
+                res.extend(node.compute)
     t = helpers.Traversal(action_cpu)
     cpu_ir.extend(t(ast))
 
     t = helpers.Traversal(action_cuda)
     gpu_ir.extend(t(ast))
 
-def print_cpp(ast):
+def print_cuda(ast):
     cpu_ir = []
     gpu_ir = []
     gen_cuda(ast, cpu_ir, gpu_ir)
-    print(cpu_ir, "CUDA IR:::" , gpu_ir)
+    # print(cpu_ir, "CUDA IR:::" , gpu_ir)
 
     args = helpers.get_input_nodes(ast)
+    
     argscpu = ', '.join([f'torch::Tensor obj_{a}' if type(args[a]) == Tensor else f'{args[a].dtype} {a}' for a in args])
     # argsptr = ', '.join([f'obj_{a}.data_ptr<{args[a].dtype}>()' if type(args[a]) == Tensor else f'{a}' for a in args])
     # ptrs = ', '.join([f'{args[a].dtype}* {a}' if type(args[a]) == Tensor else f'{args[a].dtype} {a}' for a in args])
-
-    print(args)
     
-    argsptr = ', '.join([f'obj_{a}.packed_accessor32<{args[a].dtype}, {len(args[a].ref_size)}, torch::RestrictPtrTraits>()' if type(args[a]) == Tensor else f'{a}' for a in args])
-    ptrs = ', '.join([f'torch::PackedTensorAccessor32<{args[a].dtype}, {len(args[a].ref_size)}, torch::RestrictPtrTraits> {a}' if type(args[a]) == Tensor else f'{args[a].dtype} {a}' for a in args])
+    argsptr = ', '.join([f'obj_{a}.packed_accessor32<{args[a].dtype if args[a].dtype!="int" else "int64_t"}, {len(args[a].ref_size)}, torch::RestrictPtrTraits>()' if type(args[a]) == Tensor else f'{a}' for a in args])
+    ptrs = ', '.join([f'torch::PackedTensorAccessor32<{args[a].dtype if args[a].dtype!="int" else "int64_t"}, {len(args[a].ref_size)}, torch::RestrictPtrTraits> {a}' if type(args[a]) == Tensor else f'{args[a].dtype} {a}' for a in args])
     # in cuda kernel:     const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits>
     # host call cuda:     .packed_accessor32<float, 2, torch::RestrictPtrTraits>()
 
@@ -116,7 +120,7 @@ def print_cpp(ast):
                 ptrs += f', torch::PackedTensorAccessor32<{d.dobject.dtype}, {len(d.dobject.size)}, torch::RestrictPtrTraits> {d.dobject.name()}'
             else:
                 code += to_string(d)
-            
+    # print(declare)
     Return = ''
     if type(ast.eval) == Scalar:
         rtype = ast.dtype
