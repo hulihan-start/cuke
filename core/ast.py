@@ -89,6 +89,7 @@ class ASTNode:
         self.ref_count = 0
         self.id = ASTNode.nuniq
         ASTNode.nuniq += 1
+        self.valid = True
 
 
 class Tensor(ASTNode):
@@ -238,6 +239,8 @@ class Const(Var):
     def __init__(self, val, dtype):
         super().__init__(f'c{Const.nconsts}', dtype)
         Const.nconsts += 1
+        # slice is considered constant because once the slice is created its start, stop, step cannot be reassigned
+        # however, start, stop, step themselves can be variables
         if dtype == 'slice':
             assert type(val.start) == int or is_int_var(val.start)
             assert type(val.stop) == int or is_int_var(val.stop)
@@ -258,6 +261,7 @@ class TensorOp(Tensor):
         dtype = operators[0].dtype
         self.operators = []
         for opr in operators:
+            # an index can be referenced multiple times in the ast, we should create duplicate copies so that they can bind with different loop iterates
             if type(opr) == TensorOp and opr.op_type == 'index' and opr.ref_count >= 1:
                 new_opr = copy.copy(opr)
                 new_opr.ref_count = 1
@@ -325,7 +329,7 @@ class TensorOp(Tensor):
             elif is_int_var(self.operators[1]):
                 self.operators[1] = self.operators[1]
             elif is_1dint_tensor(self.operators[1]):
-                fix_size.append(self.operators[1].ref_size[0])
+                fix_size.append(self.operators[1]._size()[0])
             else:
                 raise TypeError('index must be int, Var of int, or 1d int Tensor')
 
@@ -396,7 +400,6 @@ class TensorOp(Tensor):
         super().__init__(name, ref_size, dtype, fix_size)
 
         self.op_type = op_type
-
 
 
 

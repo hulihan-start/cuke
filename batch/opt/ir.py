@@ -1,16 +1,5 @@
 from core.ir import *
 
-# class ThreadMapping():
-#     loop_id = 0
-#     def __init__(self, start, end, step, body: list):
-#         self.lid = ThreadMapping.loop_id
-#         ThreadMapping.loop_id += 1
-#         self.start = start
-#         self.end = end
-#         self.step = step
-#         self.body = body
-#         self.iterate = Scalar('int', f'_l{self.lid}')
-
 class BlockIdy(IR):
     def __init__(self):
         super().__init__()
@@ -69,3 +58,41 @@ class BroadCast(IR):
     def __init__(self, dobject):
         super().__init__()
         self.dobject = dobject
+
+class Shared(IR):
+    def __init__(self, dobject):
+        super().__init__()
+        self.dobject = dobject
+
+class Uniq(IR):
+    def __init__(self, dobject):
+        super().__init__()
+        self.dobject = dobject
+
+class Buffer(IR):
+    def __init__(self, dobject):
+        super().__init__()
+        self.dobject = dobject
+
+class IF(IR):
+    def __init__(self, left, condition: Expr, true_var, false_var):
+        super().__init__()
+        self.left = left
+        self.condition = condition
+        self.true_var = true_var
+        self.false_var = false_var
+
+class Pointer(DOject):
+    def __init__(self, dtype, size):
+        super().__init__(dtype, size)
+        self.__name__ = f'ptr{self.dobject_id}'
+        self.dtype = dtype
+        self.size = size
+
+    def name(self):
+        return self.__name__
+
+class Access_ptr():
+    def __init__(self, dobject:Pointer, idx):
+        self.dobject = dobject
+        self.idx = idx

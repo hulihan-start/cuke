@@ -50,6 +50,9 @@ def add_reduction(ast):
             add_reduction(ast.operators[1])
         if type(ast.operators[0]) == BatchOp:
             add_reduction(ast.operators[0])
+    else:
+        return
+    
     # todo: add traverse action to add reduction
     if ast.op_type == 'vec_mul_vec':
         # this inner_prod node is fused with upper layer
@@ -98,9 +101,20 @@ def cuda_spec(ast):
                 assign = Assignment(body.iterate, Expr(ThreadIdy(), Expr(BlockDimy(), BlockIdx(), '*'), '+'))
                 body_list.append(assign)
                 for item in body.body:
-                    if isinstance(item, Loop) and item.start == 0:
+                    if isinstance(item, Loop) and item.step == 1:
                         item.start = ThreadIdx()
                         item.step = BlockDimx()
+                    elif isinstance(item, Loop):
+                        for j in item.body:
+                            if isinstance(j, Loop) and j.step == 1:
+                                j.start = ThreadIdx()
+                                j.step = BlockDimx()
+                            elif isinstance(j, Loop):
+                                for k in j.body:
+                                    if isinstance(k, Loop) and k.step == 1:
+                                        k.start = ThreadIdx()
+                                        k.step = BlockDimx()
+
                     body_list.append(item)
                 compute_list.extend(body_list)
             ast.compute = compute_list

@@ -2,8 +2,10 @@ import sys
 sys.path.append('/data/backed_up/lihhu/CUKE/cuke')
 from codegen import *
 from batch.ast import *
-from batch.opt.fusion_rules import *
-from batch.opt.parallelism import *
+# from batch.opt.fusion_rules import *
+# from batch.opt.parallelism import *
+# from batch.opt.tiling import *
+from batch.opt import *
 import run
 import torch
 
@@ -28,8 +30,9 @@ def transE():
     ast = res._gen_ir()
     fuse_operators(ast)
     
-    # code = codegen.cpu.print_cpp(ast)
+    tile_loop(ast)
     parallel(ast)
+    add_smem(ast)
     code = codegen.gpu.print_cuda(ast)
     print(code)
     # h = torch.randint(0, 9999, (4096, )).cuda(0)
@@ -66,22 +69,24 @@ def transH():
     # code = codegen.cpu.print_cpp(res._gen_ir())
     ast = res._gen_ir()
     fuse_operators(ast)
+    tile_loop(ast)
     parallel(ast)
+    add_smem(ast)
     # code = codegen.cpu.print_cpp(ast)
     code = codegen.gpu.print_cuda(ast)
     print(code)
-    h = torch.randint(0, 9999, (4096, )).cuda(0)
-    r = torch.randint(0, 100, (4096, )).cuda(0)
-    t = torch.randint(0, 9999, (4096, )).cuda(0)
-    eemb = torch.rand((9999, 512)).cuda(0)
-    remb = torch.rand((100, 512)).cuda(0)
-    pemb = torch.rand((100, 512)).cuda(0)
+    # h = torch.randint(0, 9999, (4096, )).cuda(0)
+    # r = torch.randint(0, 100, (4096, )).cuda(0)
+    # t = torch.randint(0, 9999, (4096, )).cuda(0)
+    # eemb = torch.rand((9999, 512)).cuda(0)
+    # remb = torch.rand((100, 512)).cuda(0)
+    # pemb = torch.rand((100, 512)).cuda(0)
 
-    y = eemb[h] + remb[r] - eemb[t] - torch.einsum('a,ab->ab', torch.einsum('ab,ab->a', pemb[r], eemb[h]-eemb[t]), pemb[r])
-    print(y)
+    # y = eemb[h] + remb[r] - eemb[t] - torch.einsum('a,ab->ab', torch.einsum('ab,ab->a', pemb[r], eemb[h]-eemb[t]), pemb[r])
+    # print(y)
     
-    x = run.gpu.compile_and_run(code, 4096, 512, 0, eemb, h,t, 0, remb, r, pemb)
-    print(x)
+    # x = run.gpu.compile_and_run(code, 4096, 512, 0, eemb, h,t, 0, remb, r, pemb)
+    # print(x)
 
 
 def transR():
@@ -106,9 +111,10 @@ def transR():
     
     ast = res._gen_ir()
     fuse_operators(ast)
-    # print(codegen.cpu.print_cpp(ast))
+    # todo decouple operators
+    tile_loop(ast)
     parallel(ast)
-    
+    # add_smem(ast)
     # code = codegen.cpu.print_cpp(ast)
     code = codegen.gpu.print_cuda(ast)
     print(code)
@@ -149,20 +155,22 @@ def transF():
     code = codegen.cpu.print_cpp(res._gen_ir())
     ast = res._gen_ir()
     fuse_operators(ast)
+    tile_loop(ast)
     parallel(ast)
+    add_smem(ast)
     code = codegen.gpu.print_cuda(ast)
     print(code)
-    h = torch.randint(0, 9999, (4096, )).cuda(0)
-    r = torch.randint(0, 100, (4096, )).cuda(0)
-    t = torch.randint(0, 9999, (4096, )).cuda(0)
-    eemb = torch.rand((9999, 512)).cuda(0)
-    remb = torch.rand((100, 512)).cuda(0)
+    # h = torch.randint(0, 9999, (4096, )).cuda(0)
+    # r = torch.randint(0, 100, (4096, )).cuda(0)
+    # t = torch.randint(0, 9999, (4096, )).cuda(0)
+    # eemb = torch.rand((9999, 512)).cuda(0)
+    # remb = torch.rand((100, 512)).cuda(0)
 
-    y = torch.einsum('ab,ab->a', eemb[h], eemb[t]) - torch.einsum('ab,ab->a',(eemb[h] - eemb[t]), remb[r])
-    print(y)
+    # y = torch.einsum('ab,ab->a', eemb[h], eemb[t]) - torch.einsum('ab,ab->a',(eemb[h] - eemb[t]), remb[r])
+    # print(y)
     
-    x = run.gpu.compile_and_run(code, 4096, 512, 0, eemb, h,t, 0, remb, r)
-    print(x)
+    # x = run.gpu.compile_and_run(code, 4096, 512, 0, eemb, h,t, 0, remb, r)
+    # print(x)
 
 def RESCAL():
     nnodes = Var('nnodes')
@@ -185,22 +193,25 @@ def RESCAL():
     ast = res._gen_ir()
     
     fuse_operators(ast)
+    tile_loop(ast)
     parallel(ast)
+    add_smem(ast)
+    # traversal call funcs to opt ir
     # code = codegen.cpu.print_cpp(ast)
     code = codegen.gpu.print_cuda(ast)
     print(code)
 
-    h = torch.randint(0, 9999, (4096, )).cuda(0)
-    r = torch.randint(0, 100, (4096, )).cuda(0)
-    t = torch.randint(0, 9999, (4096, )).cuda(0)
-    eemb = torch.rand((9999, 512)).cuda(0)
-    remb = torch.rand((100, 512, 512)).cuda(0)
+    # h = torch.randint(0, 9999, (4096, )).cuda(0)
+    # r = torch.randint(0, 100, (4096, )).cuda(0)
+    # t = torch.randint(0, 9999, (4096, )).cuda(0)
+    # eemb = torch.rand((9999, 512)).cuda(0)
+    # remb = torch.rand((100, 512, 512)).cuda(0)
 
-    y = torch.einsum('ab,ab->a', torch.einsum('ab,abc->ac', eemb[h], remb[r]), eemb[t])
-    print(y, y.shape)
+    # y = torch.einsum('ab,ab->a', torch.einsum('ab,abc->ac', eemb[h], remb[r]), eemb[t])
+    # print(y, y.shape)
     
-    x = run.gpu.compile_and_run(code, 4096, 512, 0, eemb, h, 0, remb, r, t)
-    print(x)
+    # x = run.gpu.compile_and_run(code, 4096, 512, 0, eemb, h, 0, remb, r, t)
+    # print(x)
 
 def test():
     nnodes = Var('nnodes')
@@ -245,9 +256,9 @@ def test():
 
 if __name__ == "__main__":
     # test() # bov success
-    transE() # success
+    # transE() # success
     # transH() # success
-    # transR() # success
+    transR() # success
     # transF() # success
     # RESCAL() # success
     
