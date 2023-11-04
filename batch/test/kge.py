@@ -1,4 +1,3 @@
-import sys
 from codegen import *
 from batch.ast import *
 import run
@@ -25,9 +24,9 @@ def transE():
 
     ast = res._gen_ir()
     opt.fusion_rules.fuse_operators(ast)
-    opt.tiling.tile_loop(ast)
-    opt.parallelism.parallel(ast)
-    opt.smem.add_smem(ast)
+    opt.node_wise.tiling.tile_loop(ast)
+    opt.node_wise.parallelism.parallel(ast)
+    opt.node_wise.smem.add_smem(ast)
     code = codegen.gpu.print_cuda(ast)
     print(code)
     # h = torch.randint(0, 9999, (4096, )).cuda(0)
@@ -64,9 +63,9 @@ def transH():
     # code = codegen.cpu.print_cpp(res._gen_ir())
     ast = res._gen_ir()
     opt.fusion_rules.fuse_operators(ast)
-    opt.tiling.tile_loop(ast)
-    opt.parallelism.parallel(ast)
-    opt.smem.add_smem(ast)
+    opt.node_wise.tiling.tile_loop(ast)
+    opt.node_wise.parallelism.parallel(ast)
+    opt.node_wise.smem.add_smem(ast)
     # code = codegen.cpu.print_cpp(ast)
     code = codegen.gpu.print_cuda(ast)
     print(code)
@@ -107,9 +106,9 @@ def transR():
     ast = res._gen_ir()
     opt.fusion_rules.fuse_operators(ast)
     # todo decouple operators
-    # opt.tiling.tile_loop(ast)
-    # opt.parallelism.parallel(ast)
-    # opt.smem.add_smem(ast)
+    opt.node_wise.tiling.tile_loop(ast)
+    opt.node_wise.parallelism.parallel(ast)
+    opt.node_wise.smem.add_smem(ast)
     # code = codegen.cpu.print_cpp(ast)
     code = codegen.gpu.print_cuda(ast)
     print(code)
@@ -150,9 +149,9 @@ def transF():
     code = codegen.cpu.print_cpp(res._gen_ir())
     ast = res._gen_ir()
     opt.fusion_rules.fuse_operators(ast)
-    opt.tiling.tile_loop(ast)
-    opt.parallelism.parallel(ast)
-    opt.smem.add_smem(ast)
+    opt.node_wise.tiling.tile_loop(ast)
+    opt.node_wise.parallelism.parallel(ast)
+    opt.node_wise.smem.add_smem(ast)
     code = codegen.gpu.print_cuda(ast)
     print(code)
     # h = torch.randint(0, 9999, (4096, )).cuda(0)
@@ -188,9 +187,9 @@ def RESCAL():
     ast = res._gen_ir()
     
     opt.fusion_rules.fuse_operators(ast)
-    # opt.tiling.tile_loop(ast)
-    # opt.parallelism.parallel(ast)
-    # opt.smem.add_smem(ast)
+    opt.node_wise.tiling.tile_loop(ast)
+    opt.node_wise.parallelism.parallel(ast)
+    opt.node_wise.smem.add_smem(ast)
     # traversal call funcs to opt ir
     # code = codegen.cpu.print_cpp(ast)
     code = codegen.gpu.print_cuda(ast)

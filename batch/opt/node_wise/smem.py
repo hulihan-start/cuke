@@ -39,16 +39,6 @@ def get_ori_var(ir):
     elif isinstance(ir, Ndarray):
         return ir
 
-def change_expridx(ir, var):
-    # if is expr, change right of expr as loop.iterate
-    if isinstance(ir, Indexing):
-        temp = ir
-        temp.idx = change_expridx(temp.idx, var)
-        temp = temp.dobject
-    elif isinstance(ir, Expr):
-        if ir.right != var and ir.op == '+':
-            ir.right = var
-    return ir
 
 def if_exist(ir, arr):
     if isinstance(ir, Indexing):
@@ -174,17 +164,18 @@ def data_loading(compute_ir, smem_arr, ori_arr):
                                 stmt.body.insert(0, store_loop)
                     elif len(smem_arr[i].size) == 3:
                         temp_stmt = stmt
-                        
+                        # print(codegen.gpu.to_string(temp_stmt))
                         for iloop in stmt.body:
                             if isinstance(iloop, Loop) and isinstance(iloop.body[0], Loop):
-                                if iloop.start == 0 and iloop.end.name() == 'dim' and isinstance(iloop.body[0].start, ThreadIdx) and iloop.body[0].end.name() == 'D':
+                                if iloop.start == 0 and iloop.end.name() == 'dim' and iloop.body[0].end.name() == 'D':
                                     temp_stmt = iloop
                                     break
+                        # print(codegen.gpu.to_string(temp_stmt))
                         for shared_item in cur_arr:
                             flag = if_exist(temp_stmt, shared_item[0])
                             # print(codegen.gpu.to_string(temp_stmt), codegen.gpu.to_string(shared_item[0]))
                             if flag:
-                                oloop = Loop(0, 2, 1, [])
+                                oloop = Loop(Literal(0, 'int'), Literal(2, 'int'), Literal(1, 'int'), [])
                                 store_loop1 = Loop(ThreadIdy(), stmt.step, BlockDimy(), [])
                                 store_loop2 = Loop(ThreadIdx(), stmt.step, BlockDimx(), [])
                                 oloop.body.append(store_loop1)
@@ -322,11 +313,12 @@ def add_smem(ast):
             smema = Ndarray('float', size, f'smem_{i.dobject_id}')
             smem_list.append(smema)
             ast.decl.append(Decl(Shared(smema)))
-        
+            
         decl = data_loading(ast.compute, smem_list, var_list)
         ast.decl.extend(decl)
 
     if type(ast) == BatchOp and not ast.valid and isinstance(ast.eval, Ndarray):
+        # change shared memory access
         node = ast.compute[0].astnode
         ir_dict = {}
         smem_list = []
@@ -352,14 +344,68 @@ def add_smem(ast):
                     temp = temp.dobject
                 idx_list = idx_list[::-1]
                 newsmem = smem_list[i]
+                
                 for kk in range(len(idx_list)):
                     newsmem = Indexing(newsmem, Literal(-1, 'int'))
-                    if isinstance(idx_list[kk], Scalar):
-                        newsmem.idx = ThreadIdy()
+                    if isinstance(idx_list[kk], (Scalar, ThreadIdy)):
+                        newsmem.idx = idx_list[kk]
                     elif isinstance(idx_list[kk], Expr):
                         newsmem.idx = idx_list[kk].right
                 smem_idx_list.append(newsmem)
             for j in node.compute:
                 for idx in range(len(smem_idx_list)):
                     j = change_access(j, ir_dict[key][idx], smem_idx_list[idx])
+    
+    if type(ast) == BatchOp and not ast.valid and ast.op_type=='vec_mul_mat':
+        # print(ast.operators[0], ast.operators[1])
+        # print(ast.operators[0].eval, codegen.gpu.to_string(ast.operators[0].eval))
+        # print(ast.operators[0].op_type, ast.operators[1].op_type)
+        # print(ast.compute[0].astnode)
+        main_loop = ast.compute[0].astnode.compute
+        smem_dict = {}
+        for i in main_loop:
+            # print(codegen.gpu.to_string(i))
+            if if_in_ir(i, ast.operators[0].eval, smem_dict):
+                temp_stmt = i
+                # find target loop
+                for iloop in i.body:
+                    if isinstance(iloop, Loop) and isinstance(iloop.body[0], Loop):
+                        if iloop.start == 0 and iloop.end.name() == 'dim' and iloop.body[0].end.name() == 'D':
+                            temp_stmt = iloop
+                            break
+                # print('eval in this stmt:', temp_stmt, codegen.gpu.to_string(temp_stmt))
+                newsmem = ast.operators[0].eval
+                arr = list(smem_dict.keys())[0]
+                idx = smem_dict[arr][0]
+                iter_list = []
+                tidx = idx
+                while isinstance(tidx,Indexing):
+                    iter_list.append(tidx.idx)
+                    tidx = tidx.dobject
+                # print(arr, codegen.gpu.to_string(arr), idx, codegen.gpu.to_string(idx))
+                store_loop = Loop(ThreadIdx(), Scalar('int', 'D'), BlockDimx(), [])
                 
+                temp_stmt.body.insert(0, SyncThreads())
+                temp_stmt.body.insert(0, store_loop)
+                smema = Ndarray('float', [Scalar('int', 'C'), Scalar('int', 'D')], f'smem_{ast.operators[0].eval.dobject_id}')
+                node.decl.append(Decl(Shared(smema)))
+
+                new_access = Indexing(smema, Literal(-1, 'int'))
+                new_access.idx = ThreadIdy()
+                new_access = Indexing(new_access, iter_list[0].right)
+                change_access(temp_stmt, idx, new_access)
+
+                smema = Indexing(smema, Literal(-1, 'int'))
+                smema.idx = ThreadIdy()
+                smema = Indexing(smema, store_loop.iterate)
+                
+                global_arr = arr
+                for i in iter_list[::-1]:
+                    global_arr = Indexing(global_arr, Literal(-1, 'int'))
+                    if isinstance(i, Expr):
+                        global_arr.idx = Expr(i.left, i.right, i.op)
+                    else:
+                        global_arr.idx = i
+                global_arr.idx.right = store_loop.iterate
+                assign = Assignment(smema, global_arr)
+                store_loop.body.append(assign)
