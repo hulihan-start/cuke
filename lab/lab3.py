@@ -58,12 +58,26 @@ def rebind_iterate(ir, old_idx, new_idx):
         for l in ir:
             rebind_iterate(l, old_idx, new_idx)
     elif type(ir) == Assignment:
-        rebind_iterate(ir.left,  old_idx, new_idx)
-        rebind_iterate(ir.right, old_idx, new_idx)
+        rebind_iterate(ir.lhs, old_idx, new_idx)
+        rebind_iterate(ir.rhs, old_idx, new_idx)
     elif type(ir) == Index:
-        if ir.index == old_idx:
-            ir.index = new_idx:
-    # Some other types 
+        temp = ir
+        while isinstance(temp, Index):
+            if temp.index in old_idx:
+                idx = old_idx.index(temp.index)
+                temp.index = new_idx[idx]
+            temp = temp.dobject
+        temp = ir
+        while isinstance(temp, Index):
+            if temp.index in old_idx:
+                idx = old_idx.index(temp.index)
+                temp.index = new_idx[idx]
+            temp = temp.index
+    elif isinstance(ir, Loop):
+        rebind_iterate(ir.body, old_idx, new_idx)
+    elif isinstance(ir, Expr):
+        rebind_iterate(ir.left, old_idx, new_idx)
+        rebind_iterate(ir.right, old_idx, new_idx)
 
 def fusable_level(node0, node1):
     def _fusable_level(loop0, loop1, level):
@@ -80,8 +94,8 @@ def fusable_level(node0, node1):
 def move_ir(node0, node1, move_level):
     def _move_ir(loop0, loop1, cur_level):
         if cur_level==move_level-1:
-            loop1.body = loop0.body + loop1.body 
-        else:
+            loop1.body = loop0.body + loop1.body
+        elif isinstance(loop0, Loop) and isinstance(loop1, Loop):
             _move_ir(loop0.body[0], loop1.body[0], cur_level+1) 
 
     loop0 = node0.compute[0]
@@ -98,25 +112,59 @@ def get_rhs(node):
             return ir.rhs
     return _get_rhs(node.compute[0])
 
+def get_iterates(ir, idx_list, move_level=999):
+    if move_level > 0:
+        if isinstance(ir, Loop):
+            idx_list.append(ir.iterate)
+            get_iterates(ir.body, idx_list, move_level-1)
+        elif isinstance(ir, (list, tuple)):
+            for l in ir:
+                get_iterates(l, idx_list, move_level-1)
+
 def fuse(ast_wit_ir):
 	#ast_wit_irt =  #implement here
     elementwise_op = op_mapping
     node = ast_wit_ir
     def action(node, res):
         if type(node) == TensorOp and node.op_type in elementwise_op:
+            oidx_list = []
+            nidx_list = []
             if type(node.operators[0]) == TensorOp and node.operators[0].op_type in elementwise_op:      
-                print("Find fusable pairs! Left")
+                # print("Find fusable pairs! Left")
+                move_ir(node.operators[0], node, fusable_level(node.operators[0], node))
+                get_iterates(node.compute, nidx_list)
+                get_iterates(node.operators[0].compute, oidx_list)
+                replace_index_with_scalar(node.compute, node.operators[0].eval, Scalar(node.operators[0].eval.dtype))
+                rebind_iterate(node.compute, oidx_list, nidx_list)
+                node.operators[0].compute = []
                 #Do something here
             if type(node.operators[1]) == TensorOp and node.operators[1].op_type in elementwise_op:
-                print("Find fusable pairs! Right")
+                # print("Find fusable pairs! Right")
                 #Do something here
+                move_ir(node.operators[1], node, fusable_level(node.operators[1], node))
+                get_iterates(node.compute, nidx_list)
+                get_iterates(node.operators[1].compute, oidx_list)
+                replace_index_with_scalar(node.compute, node.operators[1].eval, Scalar(node.operators[1].eval.dtype))
+                rebind_iterate(node.compute, oidx_list, nidx_list)
+                node.operators[1].compute = []
             if type(node.operators[0]) == TensorOp and node.operators[0].op_type == 'einsum':
                 #Do something here
+                move_ir(node.operators[0], node, fusable_level(node.operators[0], node))
+                get_iterates(node.compute, nidx_list, fusable_level(node.operators[0], node))
+                get_iterates(node.operators[0].compute, oidx_list, fusable_level(node.operators[0], node))
+                rebind_iterate(node.compute, oidx_list, nidx_list)
+                node.operators[0].compute = []
             if type(node.operators[1]) == TensorOp and node.operators[1].op_type == 'einsum':
                 #Do something here
-           
+                move_ir(node.operators[1], node, fusable_level(node.operators[1], node))
+                get_iterates(node.compute, nidx_list, fusable_level(node.operators[1], node))
+                get_iterates(node.operators[1].compute, oidx_list, fusable_level(node.operators[1], node))
+                rebind_iterate(node.compute, oidx_list, nidx_list)
+                node.operators[1].compute = []
+
     t = helpers.Traversal(action)
     t(node)
+
     return node
 
 
@@ -134,6 +182,8 @@ def test1():
     code = codegen.cpu.gen_cpp(res_with_ir)
     print(code)
     new_res_with_ir = fuse(res_with_ir)
+    code = codegen.cpu.gen_cpp(new_res_with_ir)
+    print(code)
 
 def test2():
     A = Tensor('a', (20, 30))
@@ -148,10 +198,12 @@ def test2():
     code = codegen.cpu.gen_cpp(res_with_ir)
     print(code)
     new_res_with_ir = fuse(res_with_ir)
+    code = codegen.cpu.gen_cpp(new_res_with_ir)
+    print(code)
 
 if __name__ == "__main__":
-    test1()
-
+    # test1()
+    test2()
 
 #     torch::Tensor add_add_a_b_c(torch::Tensor obj_a, torch::Tensor obj_b, torch::Tensor obj_c)
 # {
